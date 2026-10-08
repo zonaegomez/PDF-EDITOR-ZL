@@ -109,9 +109,18 @@ $("#exportBtn").onclick = async () => {
   try {
     const { exportPdf } = await import("./export.js");
     const bytes = await exportPdf(editor, (d, t) => (btn.textContent = `Generando ${d}/${t}…`));
-    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-    const a = document.createElement("a"); a.href = url; a.download = fileName.replace(/\.pdf$/i, "") + " (editado).pdf";
-    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+    const name = fileName.replace(/\.pdf$/i, "") + " (editado).pdf";
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    // inside a Claude artifact downloads go through the host; on Vercel a normal <a download> works
+    const dl = window.claude?.use ? await window.claude.use("downloads") : null;
+    if (dl) {
+      try { await dl.save({ filename: name, data: blob }); }
+      catch (err) { toast(err?.code === "declined" ? "Descarga cancelada." : "No se pudo descargar: " + (err?.message || err), 4000); return; }
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = name;
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
     toast("PDF listo · " + (bytes.length / 1e6).toFixed(1) + " MB");
   } catch (err) { console.error(err); toast("No se pudo generar el PDF: " + (err.message || err), 5000); }
   finally { btn.disabled = false; btn.textContent = "Exportar PDF"; }
