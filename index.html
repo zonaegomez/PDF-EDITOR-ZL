@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Editor PDF · Zona Luz</title>
+  <meta name="description" content="Abre cualquier PDF como HTML editable sin perder el diseño y expórtalo de nuevo a PDF.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f2220'/%3E%3Cpath d='M10 9h12v3l-8 9h8v3H10v-3l8-9h-8z' fill='%23f1f1ec'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <!-- HOME: pick a PDF -->
+  <main id="home" class="home">
+    <div class="home-in">
+      <p class="eyebrow">ZONA LUZ / HERRAMIENTAS</p>
+      <h1>Editor PDF</h1>
+      <p class="lede">Abre un PDF, cambia textos e imágenes sobre el diseño original y descárgalo de nuevo como PDF.</p>
+      <label class="drop" id="drop" for="pdfIn" tabindex="0">
+        <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
+        <span class="drop-t">Suelta tu PDF aquí</span>
+        <span class="drop-s">o haz clic para elegirlo</span>
+      </label>
+      <div class="progress" id="progress" hidden>
+        <div class="pbar"><i id="pfill"></i></div>
+        <span id="ptext">Leyendo…</span>
+      </div>
+      <p class="err" id="homeErr" role="alert" hidden></p>
+      <dl class="facts">
+        <div><dt>Privado</dt><dd>El PDF se procesa en tu navegador. No se sube a ningún servidor.</dd></div>
+        <div><dt>Funciona mejor con</dt><dd>PDFs digitales: Word, InDesign, ChatGPT, cotizadores, reportes.</dd></div>
+        <div><dt>No edita</dt><dd>Escaneos ni texto convertido a curvas. Esas páginas se marcan al abrir.</dd></div>
+      </dl>
+    </div>
+  </main>
+
+  <!-- EDITOR -->
+  <div id="app" class="app" hidden>
+    <header class="bar">
+      <div class="row">
+        <div class="brand"><b id="docTitle">Documento</b><span id="stats"></span></div>
+        <span class="chip" id="dirtyChip">sin cambios</span>
+        <span class="chip warn" id="overChip" hidden></span>
+        <div class="grp" role="group" aria-label="Zoom de vista">
+          <button class="btn" id="zOut" aria-label="Alejar">−</button>
+          <span class="zoomval" id="zVal">100%</span>
+          <button class="btn" id="zIn" aria-label="Acercar">+</button>
+          <button class="btn" id="zFit">Ajustar</button>
+        </div>
+        <button class="btn" id="showEd" aria-pressed="false">Ver editables</button>
+        <button class="btn" id="newDoc">Abrir otro</button>
+        <button class="btn primary" id="exportBtn">Exportar PDF</button>
+      </div>
+      <div class="row notes" id="notes" hidden></div>
+      <div class="row ctx" id="ctx" hidden>
+        <span class="lbl">Imagen</span>
+        <label class="btn" for="imgIn">Reemplazar…</label>
+        <input type="file" id="imgIn" accept="image/*" hidden>
+        <div class="seg" role="group" aria-label="Modo de arrastre">
+          <button id="mMove" aria-pressed="true">Mover marco</button>
+          <button id="mPan" aria-pressed="false">Encuadrar foto</button>
+        </div>
+        <label class="grp" for="zoomImg"><span class="lbl">Zoom</span>
+          <input type="range" id="zoomImg" min="100" max="400" step="1" value="100">
+          <span class="zoomval" id="zoomImgVal">100%</span></label>
+        <span class="chip" id="dims"></span>
+        <button class="btn" id="resetImg">Restablecer</button>
+        <span class="hint">Esquinas redimensionan · Shift mantiene proporción · Doble clic alterna encuadre · Flechas mueven 1 pt</span>
+      </div>
+    </header>
+    <main class="desk" id="desk"></main>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
