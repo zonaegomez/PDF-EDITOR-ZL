@@ -1,10 +1,15 @@
 // Layered editor: background image + image frames + baseline-anchored editable text lines.
+// One history stack covers text and images, so Ctrl+Z walks back through every kind of change in order.
 import { cssFamily } from "./fonts.js";
 
-const $ = (s) => document.querySelector(s);
+const HISTORY_MAX = 300;
+const TYPE_BURST_MS = 700;   // keystrokes closer than this become one undo step
 
-export function createEditor({ desk, onChange }) {
+export function createEditor({ desk, onChange, onEdit }) {
   const state = { model: null, scale: 1, sel: null, mode: "move", assets: {}, frames: [], lines: [], urls: [] };
+  const hist = { undo: [], redo: [] };
+  let pendingText = null;    // { el, before, timer }
+  let pendingFrame = null;   // { f, before, timer }
   const mctx = document.createElement("canvas").getContext("2d");
   const textW = (t, st) => { mctx.font = (st.b ? "700 " : "400 ") + st.s * 10 + "px " + cssFamily(st.f); return mctx.measureText(t).width / 10; };
 
@@ -12,11 +17,7 @@ export function createEditor({ desk, onChange }) {
   function load(model) {
     clear();
     state.model = model;
-    for (const [id, a] of Object.entries(model.assets)) {
-      const url = URL.createObjectURL(new Blob([a.bytes], { type: a.mime }));
-      state.urls.push(url);
-      state.assets[id] = { src: url, w: a.w, h: a.h, mime: a.mime, bytes: a.bytes };
-    }
+    for (const [id, a] of Object.entries(model.assets)) registerAsset(id, a.bytes, a.mime, a.w, a.h, false);
     desk.innerHTML = "";
     model.pages.forEach((p, pi) => {
       const wrap = document.createElement("section"); wrap.className = "pwrap"; wrap.setAttribute("aria-label", "Página " + (pi + 1));
@@ -26,8 +27,8 @@ export function createEditor({ desk, onChange }) {
       const bgUrl = URL.createObjectURL(new Blob([p.bg], { type: "image/png" })); state.urls.push(bgUrl);
       const bg = new Image(); bg.className = "bg"; bg.alt = ""; bg.src = bgUrl; page.append(bg);
 
-      p.frames.forEach((f) => {
-        const st = { page: pi, x: f.x, y: f.y, w: f.w, h: f.h, a: f.a, z: 1, ox: 0, oy: 0, orig: { ...f } };
+      p.frames.forEach((f, fi) => {
+        const st = { id: pi + ":" + fi, page: pi, x: f.x, y: f.y, w: f.w, h: f.h, a: f.a, z: 1, ox: 0, oy: 0, orig: { ...f } };
         const el = document.createElement("div"); el.className = "frame"; el.tabIndex = 0;
         el.setAttribute("role", "img"); el.setAttribute("aria-label", "Imagen editable de la página " + (pi + 1));
         const clip = document.createElement("div"); clip.className = "clip";
@@ -39,21 +40,17 @@ export function createEditor({ desk, onChange }) {
         st.el = el; st.img = img; st.ghost = g; el._f = st; state.frames.push(st); page.append(el); layoutFrame(st);
       });
 
-      p.lines.forEach((l) => {
+      p.lines.forEach((l, li) => {
         const el = document.createElement("div"); el.className = "line" + (l.j ? " j" : "");
         el.contentEditable = "true"; el.spellcheck = true; el.setAttribute("role", "textbox"); el.setAttribute("aria-label", "Texto editable");
         const r0 = l.runs[0].st;
         el.style.fontFamily = cssFamily(r0.f) + ",sans-serif"; el.style.fontSize = r0.s + "px"; el.style.color = r0.c; el.style.fontWeight = r0.b ? 700 : 400;
         const mk = document.createElement("span"); mk.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline"; el.append(mk);
-        l.runs.forEach((r) => {
-          const s = document.createElement("span"); s.textContent = r.t;
-          s.style.cssText = `font-family:${cssFamily(r.st.f)},sans-serif;font-size:${r.st.s}px;color:${r.st.c};font-weight:${r.st.b ? 700 : 400}`;
-          Object.assign(s.dataset, { s: r.st.s, c: r.st.c, b: r.st.b, f: r.st.f }); el.append(s);
-        });
+        fillRuns(el, l.runs);
         if (l.j) el.style.width = l.w + "px";
         el.style.left = l.x + "px";
-        el._l = l; el._orig = l.runs.map((r) => r.t).join("");
-        page.append(el); state.lines.push({ page: pi, data: l, el });
+        el._l = l; el._id = pi + ":" + li; el._orig = l.runs.map((r) => r.t).join("");
+        page.append(el); state.lines.push({ id: el._id, page: pi, data: l, el });
       });
       wrap.append(num, page); wrap._page = page; wrap._p = p; desk.append(wrap);
     });
@@ -68,7 +65,23 @@ export function createEditor({ desk, onChange }) {
     emit();
   }
 
+  function fillRuns(el, runs) {
+    runs.forEach((r) => {
+      const s = document.createElement("span"); s.textContent = r.t;
+      s.style.cssText = `font-family:${cssFamily(r.st.f)},sans-serif;font-size:${r.st.s}px;color:${r.st.c};font-weight:${r.st.b ? 700 : 400}`;
+      Object.assign(s.dataset, { s: r.st.s, c: r.st.c, b: r.st.b, f: r.st.f }); el.append(s);
+    });
+  }
+
+  function registerAsset(id, bytes, mime, w, h, user) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    state.urls.push(url);
+    state.assets[id] = { src: url, w, h, mime, bytes, user };
+  }
+
   function clear() {
+    clearTimeout(pendingText?.timer); clearTimeout(pendingFrame?.timer);
+    pendingText = pendingFrame = null; hist.undo = []; hist.redo = [];
     state.urls.forEach((u) => URL.revokeObjectURL(u));
     Object.assign(state, { model: null, sel: null, assets: {}, frames: [], lines: [], urls: [] });
     desk.innerHTML = "";
@@ -107,18 +120,48 @@ export function createEditor({ desk, onChange }) {
     walk(el, { ...base });
     return out;
   }
+  const lineKey = (runs) => JSON.stringify(runs);
+  function setLine(el, runs, focus) {
+    el.innerHTML = ""; fillRuns(el, runs); checkLine(el);
+    if (focus) {
+      el.focus({ preventScroll: true });
+      const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    }
+  }
   function checkLine(el) {
     const runs = runsOf(el), l = el._l;
     const nat = runs.reduce((a, r) => a + textW(r.t, r.st), 0);
     el.classList.toggle("over", nat > l.w * 1.02 + 1);
     el.classList.toggle("dirty", runs.map((r) => r.t).join("") !== el._orig);
   }
+  const isDirtyLine = (el) => lineKey(runsOf(el)) !== lineKey(el._l.runs.map((r) => ({ t: r.t, st: r.st })));
 
-  desk.addEventListener("input", (e) => { if (e.target.classList?.contains("line")) { checkLine(e.target); emit(); } });
+  // typing bursts → one history entry each
+  function commitText() {
+    if (!pendingText) return;
+    clearTimeout(pendingText.timer);
+    const { el, before } = pendingText; pendingText = null;
+    const after = runsOf(el);
+    if (lineKey(after) !== lineKey(before)) pushHistory({ kind: "text", id: el._id, before, after });
+  }
+  desk.addEventListener("beforeinput", (e) => {
+    const el = e.target.closest?.(".line"); if (!el) return;
+    if (e.inputType === "historyUndo" || e.inputType === "historyRedo") { e.preventDefault(); e.inputType === "historyUndo" ? undo() : redo(); return; }
+    if (pendingText && pendingText.el !== el) commitText();
+    commitFrame();
+    if (!pendingText) pendingText = { el, before: runsOf(el) };
+  });
+  desk.addEventListener("input", (e) => {
+    const el = e.target.closest?.(".line"); if (!el) return;
+    checkLine(el); emit();
+    if (pendingText) { clearTimeout(pendingText.timer); pendingText.timer = setTimeout(commitText, TYPE_BURST_MS); }
+  });
+  desk.addEventListener("focusout", (e) => { if (e.target.classList?.contains("line")) commitText(); });
   desk.addEventListener("keydown", (e) => {
     const t = e.target;
     if (!t.classList?.contains("line") || e.key !== "Enter") return;
-    e.preventDefault();
+    e.preventDefault(); commitText();
     const pg = state.lines.find((x) => x.el === t).page;
     const list = state.lines.filter((x) => x.page === pg).map((x) => x.el).sort((a, b) => a._l.y - b._l.y || a._l.x - b._l.x);
     const n = list[list.indexOf(t) + 1];
@@ -143,11 +186,33 @@ export function createEditor({ desk, onChange }) {
     for (const im of [f.img, f.ghost]) Object.assign(im.style, { width: g.dw + "px", height: g.dh + "px", left: g.left + "px", top: g.top + "px" });
     if (state.sel === f) emit();
   }
-  const isDirtyFrame = (f) => {
-    const o = f.orig;
-    return f.a !== o.a || Math.abs(f.x - o.x) > 0.01 || Math.abs(f.y - o.y) > 0.01 || Math.abs(f.w - o.w) > 0.01 || Math.abs(f.h - o.h) > 0.01 || f.z !== 1 || f.ox || f.oy;
-  };
+  const frameState = (f) => ({ x: f.x, y: f.y, w: f.w, h: f.h, a: f.a, z: f.z, ox: f.ox, oy: f.oy });
+  const sameFrame = (a, b) => ["x", "y", "w", "h", "z", "ox", "oy"].every((k) => Math.abs(a[k] - b[k]) < 0.01) && a.a === b.a;
+  function applyFrame(f, s) {
+    const srcChanged = f.a !== s.a;
+    Object.assign(f, s);
+    if (srcChanged) f.img.src = f.ghost.src = state.assets[f.a].src;
+    layoutFrame(f);
+  }
+  const isDirtyFrame = (f) => !sameFrame(frameState(f), { ...f.orig, z: 1, ox: 0, oy: 0 });
+
+  // frame edits: begin captures "before", commit pushes one history step
+  function beginFrame(f) {
+    if (pendingFrame && pendingFrame.f !== f) commitFrame();
+    commitText();
+    if (!pendingFrame) pendingFrame = { f, before: frameState(f) };
+  }
+  function commitFrame() {
+    if (!pendingFrame) return;
+    clearTimeout(pendingFrame.timer);
+    const { f, before } = pendingFrame; pendingFrame = null;
+    const after = frameState(f);
+    if (!sameFrame(before, after)) pushHistory({ kind: "frame", id: f.id, before, after });
+  }
+  function frameBurst(f) { beginFrame(f); clearTimeout(pendingFrame.timer); pendingFrame.timer = setTimeout(commitFrame, TYPE_BURST_MS); }
+
   function select(f) {
+    commitFrame();
     if (state.sel) { state.sel.el.classList.remove("sel", "pan"); state.sel.el.querySelectorAll(".h").forEach((h) => (h.hidden = true)); }
     state.sel = f || null;
     if (f) {
@@ -158,28 +223,32 @@ export function createEditor({ desk, onChange }) {
     emit();
   }
   function setMode(m) { state.mode = m; if (state.sel) select(state.sel); else emit(); }
-  function setZoom(z) { if (!state.sel) return; state.sel.z = z; layoutFrame(state.sel); emit(); }
+  function setZoom(z) { const f = state.sel; if (!f) return; frameBurst(f); f.z = z; layoutFrame(f); emit(); }
   function resetSel() {
     const f = state.sel; if (!f) return;
-    Object.assign(f, { x: f.orig.x, y: f.orig.y, w: f.orig.w, h: f.orig.h, a: f.orig.a, z: 1, ox: 0, oy: 0 });
-    f.img.src = f.ghost.src = state.assets[f.a].src; layoutFrame(f); emit();
+    beginFrame(f); applyFrame(f, { ...f.orig, z: 1, ox: 0, oy: 0 }); commitFrame(); emit();
   }
   async function replaceSel(file) {
     const f = state.sel; if (!f || !file) return;
-    const url = URL.createObjectURL(file); state.urls.push(url);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const url = URL.createObjectURL(new Blob([bytes], { type: file.type || "image/jpeg" }));
     const im = new Image();
-    await new Promise((res, rej) => { im.onload = res; im.onerror = () => rej(new Error("No se pudo leer esa imagen. Prueba con JPG o PNG.")); im.src = url; });
-    const id = "u" + Date.now();
-    state.assets[id] = { src: url, w: im.naturalWidth, h: im.naturalHeight, mime: file.type === "image/png" ? "image/png" : "image/jpeg", img: im };
-    Object.assign(f, { a: id, z: 1, ox: 0, oy: 0 });
-    f.img.src = f.ghost.src = url; layoutFrame(f); emit();
+    try {
+      await new Promise((res, rej) => { im.onload = res; im.onerror = rej; im.src = url; });
+    } catch { URL.revokeObjectURL(url); throw new Error("No se pudo leer esa imagen. Prueba con JPG o PNG."); }
+    URL.revokeObjectURL(url);
+    const id = "u" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    registerAsset(id, bytes, file.type === "image/png" ? "image/png" : "image/jpeg", im.naturalWidth, im.naturalHeight, true);
+    beginFrame(f); applyFrame(f, { ...frameState(f), a: id, z: 1, ox: 0, oy: 0 }); commitFrame(); emit();
   }
 
   let drag = null;
   desk.addEventListener("pointerdown", (e) => {
     const fe = e.target.closest(".frame");
-    if (!fe) { select(null); return; }
+    if (!fe) { if (!e.target.closest(".line")) select(null); return; }
     const f = fe._f;
+    // move keyboard focus off any text line so arrows and shortcuts act on the image
+    if (document.activeElement !== fe) fe.focus({ preventScroll: true });
     if (state.sel !== f) { select(f); if (e.pointerType === "touch") return; }
     drag = { f, h: e.target.dataset?.h, sx: e.clientX, sy: e.clientY, start: { x: f.x, y: f.y, w: f.w, h: f.h, ox: f.ox, oy: f.oy }, moved: false };
     fe.setPointerCapture?.(e.pointerId); e.preventDefault();
@@ -188,6 +257,7 @@ export function createEditor({ desk, onChange }) {
     if (!drag) return;
     const { f, h, start: s } = drag, dx = (e.clientX - drag.sx) / state.scale, dy = (e.clientY - drag.sy) / state.scale;
     if (!drag.moved && Math.hypot(dx, dy) < 1.5) return;
+    if (!drag.moved) beginFrame(f);
     drag.moved = true;
     if (h) {
       let x = s.x, y = s.y, w = s.w, hh = s.h;
@@ -205,24 +275,74 @@ export function createEditor({ desk, onChange }) {
     else { f.x = s.x + dx; f.y = s.y + dy; }
     layoutFrame(f);
   });
-  window.addEventListener("pointercancel", () => (drag = null));
-  window.addEventListener("pointerup", () => { if (drag) { if (drag.moved) emit(); drag = null; } });
+  const endDrag = () => { if (drag) { if (drag.moved) { commitFrame(); emit(); } drag = null; } };
+  window.addEventListener("pointercancel", endDrag);
+  window.addEventListener("pointerup", endDrag);
   desk.addEventListener("dblclick", (e) => { if (e.target.closest(".frame")) setMode(state.mode === "pan" ? "move" : "pan"); });
-  window.addEventListener("keydown", (e) => {
-    const f = state.sel;
-    if (!f || e.target.closest?.(".line") || e.target.tagName === "INPUT") return;
-    if (e.key === "Escape") { select(null); return; }
-    const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
-    if (!k) return;
-    e.preventDefault(); const n = e.shiftKey ? 10 : 1;
-    if (state.mode === "pan") { f.ox += k[0] * n; f.oy += k[1] * n; } else { f.x += k[0] * n; f.y += k[1] * n; }
-    layoutFrame(f); emit();
-  });
   desk.addEventListener("wheel", (e) => {
     const f = state.sel;
     if (!f || !e.target.closest(".frame.sel") || !(e.ctrlKey || e.metaKey || state.mode === "pan")) return;
-    e.preventDefault(); f.z = Math.max(1, Math.min(4, f.z * (e.deltaY < 0 ? 1.06 : 1 / 1.06))); layoutFrame(f); emit();
+    e.preventDefault(); frameBurst(f); f.z = Math.max(1, Math.min(4, f.z * (e.deltaY < 0 ? 1.06 : 1 / 1.06))); layoutFrame(f); emit();
   }, { passive: false });
+  function nudge(dx, dy) {
+    const f = state.sel; if (!f) return false;
+    frameBurst(f);
+    if (state.mode === "pan") { f.ox += dx; f.oy += dy; } else { f.x += dx; f.y += dy; }
+    layoutFrame(f); emit(); return true;
+  }
+
+  /* ---------- history ---------- */
+  function pushHistory(entry) {
+    hist.undo.push(entry); if (hist.undo.length > HISTORY_MAX) hist.undo.shift();
+    hist.redo = [];
+    edited();
+  }
+  function applyEntry(entry, side) {
+    if (entry.kind === "text") {
+      const ln = state.lines.find((x) => x.id === entry.id); if (!ln) return;
+      setLine(ln.el, entry[side], true);
+      ln.el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    } else {
+      const f = state.frames.find((x) => x.id === entry.id); if (!f) return;
+      applyFrame(f, entry[side]); select(f);
+      f.el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }
+  function undo() {
+    commitText(); commitFrame();
+    const e = hist.undo.pop(); if (!e) return false;
+    applyEntry(e, "before"); hist.redo.push(e); edited(); return true;
+  }
+  function redo() {
+    commitText(); commitFrame();
+    const e = hist.redo.pop(); if (!e) return false;
+    applyEntry(e, "after"); hist.undo.push(e); edited(); return true;
+  }
+  const flush = () => { commitText(); commitFrame(); };
+
+  /* ---------- edits (for autosave and project files) ---------- */
+  // Only what differs from the converted original: dirty lines, dirty frames, and the user images they use.
+  function getEdits() {
+    flush();
+    const lines = state.lines.filter(({ el }) => isDirtyLine(el)).map(({ id, el }) => ({ id, runs: runsOf(el) }));
+    const frames = state.frames.filter(isDirtyFrame).map((f) => ({ id: f.id, ...frameState(f) }));
+    const assets = {};
+    frames.forEach((f) => { const a = state.assets[f.a]; if (a && a.user) assets[f.a] = { mime: a.mime, w: a.w, h: a.h, bytes: a.bytes }; });
+    return { v: 1, lines, frames, assets };
+  }
+  function applyEdits(ed) {
+    if (!ed) return 0;
+    for (const [id, a] of Object.entries(ed.assets || {})) if (!state.assets[id]) registerAsset(id, a.bytes, a.mime, a.w, a.h, true);
+    let n = 0;
+    for (const l of ed.lines || []) { const ln = state.lines.find((x) => x.id === l.id); if (ln) { setLine(ln.el, l.runs); n++; } }
+    for (const fr of ed.frames || []) {
+      const f = state.frames.find((x) => x.id === fr.id);
+      if (f && state.assets[fr.a]) { const { id, ...s } = fr; applyFrame(f, s); n++; }
+    }
+    hist.undo = []; hist.redo = [];
+    emit();
+    return n;
+  }
 
   /* ---------- status ---------- */
   function status() {
@@ -230,13 +350,16 @@ export function createEditor({ desk, onChange }) {
     const di = state.frames.filter(isDirtyFrame).length, f = state.sel;
     return {
       scale: state.scale, over, dirtyLines: dl, dirtyFrames: di, mode: state.mode,
+      canUndo: hist.undo.length > 0 || !!pendingText || !!pendingFrame, canRedo: hist.redo.length > 0,
       sel: f ? { w: f.w, h: f.h, z: f.z } : null,
     };
   }
   const emit = () => onChange && onChange(status());
+  const edited = () => { emit(); onEdit && onEdit(); };
 
   return {
     load, clear, zoom, fitWidth, setMode, setZoom, resetSel, replaceSel, select, status, geom, runsOf, isDirtyFrame,
+    undo, redo, nudge, flush, getEdits, applyEdits,
     get state() { return state; },
   };
 }

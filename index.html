@@ -18,15 +18,20 @@
       <h1>Editor PDF</h1>
       <p class="lede">Abre un PDF, cambia textos e imágenes sobre el diseño original y descárgalo de nuevo como PDF.</p>
       <label class="drop" id="drop" for="pdfIn" tabindex="0">
-        <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
+        <input type="file" id="pdfIn" accept="application/pdf,.pdf,.zlpdf" hidden>
         <span class="drop-t">Suelta tu PDF aquí</span>
-        <span class="drop-s">o haz clic para elegirlo</span>
+        <span class="drop-s">o haz clic para elegirlo · también abre proyectos .zlpdf</span>
       </label>
       <div class="progress" id="progress" hidden>
         <div class="pbar"><i id="pfill"></i></div>
         <span id="ptext">Leyendo…</span>
       </div>
       <p class="err" id="homeErr" role="alert" hidden></p>
+      <section class="recent" id="recent" hidden aria-labelledby="recentH">
+        <h2 id="recentH" class="lbl">Continúa donde te quedaste</h2>
+        <ul id="recentList"></ul>
+        <p class="recent-n">Guardado solo en este navegador. Para moverlo a otra compu usa “Guardar proyecto”.</p>
+      </section>
       <dl class="facts">
         <div><dt>Privado</dt><dd>El PDF se procesa en tu navegador. No se sube a ningún servidor.</dd></div>
         <div><dt>Funciona mejor con</dt><dd>PDFs digitales: Word, InDesign, ChatGPT, cotizadores, reportes.</dd></div>
@@ -41,7 +46,12 @@
       <div class="row">
         <div class="brand"><b id="docTitle">Documento</b><span id="stats"></span></div>
         <span class="chip" id="dirtyChip">sin cambios</span>
+        <span class="chip ok" id="saveChip" hidden></span>
         <span class="chip warn" id="overChip" hidden></span>
+        <div class="grp" role="group" aria-label="Historial">
+          <button class="btn" id="undoBtn" title="Deshacer (Ctrl+Z)" aria-label="Deshacer" disabled>↶ Deshacer</button>
+          <button class="btn" id="redoBtn" title="Rehacer (Ctrl+Shift+Z)" aria-label="Rehacer" disabled>↷</button>
+        </div>
         <div class="grp" role="group" aria-label="Zoom de vista">
           <button class="btn" id="zOut" aria-label="Alejar">−</button>
           <span class="zoomval" id="zVal">100%</span>
@@ -50,9 +60,30 @@
         </div>
         <button class="btn" id="showEd" aria-pressed="false">Ver editables</button>
         <button class="btn" id="newDoc">Abrir otro</button>
+        <button class="btn" id="saveProj" title="Descarga un archivo .zlpdf para seguir editando después (Ctrl+Shift+S)">Guardar proyecto</button>
+        <button class="btn" id="keysBtn" aria-expanded="false" aria-controls="keys" title="Atajos de teclado">?</button>
         <button class="btn primary" id="exportBtn">Exportar PDF</button>
       </div>
       <div class="row notes" id="notes" hidden></div>
+      <div class="row resume" id="resume" hidden>
+        <span id="resumeText"></span>
+        <button class="btn primary" id="resumeYes">Recuperar cambios</button>
+        <button class="btn" id="resumeNo">Empezar de cero</button>
+      </div>
+      <div class="keys" id="keys" hidden>
+        <dl>
+          <div><dt>Ctrl Z</dt><dd>Deshacer</dd></div>
+          <div><dt>Ctrl Shift Z · Ctrl Y</dt><dd>Rehacer</dd></div>
+          <div><dt>Ctrl S</dt><dd>Guardar en este navegador</dd></div>
+          <div><dt>Ctrl Shift S</dt><dd>Guardar proyecto (.zlpdf)</dd></div>
+          <div><dt>Ctrl E</dt><dd>Exportar PDF</dd></div>
+          <div><dt>Enter</dt><dd>Siguiente línea de texto</dd></div>
+          <div><dt>Flechas · Shift</dt><dd>Mover imagen 1 pt · 10 pt</dd></div>
+          <div><dt>Doble clic</dt><dd>Alternar mover / encuadrar foto</dd></div>
+          <div><dt>Ctrl + rueda</dt><dd>Zoom dentro de la imagen</dd></div>
+          <div><dt>Esc</dt><dd>Soltar selección</dd></div>
+        </dl>
+      </div>
       <div class="row ctx" id="ctx" hidden>
         <span class="lbl">Imagen</span>
         <label class="btn" for="imgIn">Reemplazar…</label>
