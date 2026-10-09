@@ -13,6 +13,15 @@ Cada página se separa en tres capas:
 | Imágenes | Cada foto como marco independiente | Reemplazar, mover, redimensionar, zoom y encuadre dentro del marco |
 | Texto | Cada línea anclada a su línea base exacta, con su fuente, tamaño, color y justificado | Editar en sitio; las líneas que se pasan del ancho original se marcan en naranja |
 
+### Formato, texto nuevo e imágenes nuevas
+
+- **Formato de texto**: selecciona palabras (o deja el cursor en la línea para cambiarla completa) y cambia **tipografía, tamaño, color y negrita** desde la barra "Línea / Selección". La línea base no se mueve: el texto crece hacia arriba y hacia la derecha.
+- **Tipografías**: las del documento, 8 de Google Fonts (Montserrat, Inter, Poppins, Roboto, Open Sans, Lato, Oswald, Playfair Display) y **tus fuentes**: "Subir fuente…" acepta `.ttf` / `.otf` (sube regular y bold juntas). Se embeben en el PDF y viajan dentro del borrador y del `.zlpdf`.
+- **＋ Texto**: clic en el botón y luego en la página. Enter crea la línea siguiente; se mueve arrastrando la agarradera punteada a su izquierda; una caja vacía se elimina sola.
+- **＋ Imagen**: botón, arrastrar un archivo a la página o pegar con `Ctrl V`. Queda como marco con mover, redimensionar, zoom y encuadre.
+- **Eliminar imagen**: botón "Eliminar" o `Supr` con la imagen seleccionada (también las originales del PDF).
+- Todo entra al mismo historial de `Ctrl Z` y al guardado.
+
 ### Guardar y deshacer
 
 - **Deshacer / rehacer** (`Ctrl Z`, `Ctrl Shift Z` o `Ctrl Y`): un solo historial para texto e imágenes. Escritura continua, ráfagas de flechas y zoom cuentan como un paso.
@@ -34,11 +43,11 @@ src/
   worker.js    corre la conversión fuera del hilo principal
   editor.js    texto editable, marcos de imagen, zoom de vista
   export.js    reconstrucción del PDF con pdf-lib + fontkit
-  fonts.js     registro de fuentes completas (sin huecos de glifos)
+  fonts.js     registro de fuentes: sustitutas, Google Fonts y fuentes subidas
   main.js      pantalla de inicio, barra de herramientas, atajos, autoguardado
   store.js     borradores locales en IndexedDB
   project.js   formato de proyecto .zlpdf
-public/fonts/  DejaVu Sans + Liberation Sans/Serif/Mono
+public/fonts/  DejaVu Sans, Liberation Sans/Serif/Mono y 8 familias de Google Fonts (OFL)
 test/          conversión en Node y prueba end-to-end en Chromium
 ```
 
@@ -54,6 +63,7 @@ npm run test:convert -- archivo.pdf   # conversión en Node, resumen en consola
 Prueba end-to-end (requiere Python + Playwright): `npm run build && npx vite preview`, luego
 `python3 test/e2e.py archivo.pdf test/` — abre el PDF, edita, exporta y deja capturas en `test/`.
 `python3 test/e2e_save.py archivo.pdf test/` — deshacer/rehacer, autoguardado, recuperación y proyecto `.zlpdf`.
+`python3 test/e2e_format.py archivo.pdf test/` — formato por selección, cajas de texto, imágenes nuevas y borradas, fuente propia (necesita `test/sample.png`).
 
 ## Deploy en Vercel
 
@@ -67,7 +77,10 @@ El motor WASM pesa ~4.8 MB comprimido; se descarga una vez y queda en caché.
 
 - **PDFs escaneados o con texto en curvas** (exportaciones de Canva/Illustrator): no hay texto que editar. La app lo avisa al abrir. Siguiente paso: OCR.
 - **Fuentes**: se sustituyen por equivalentes abiertas (Liberation es métricamente compatible con Arial/Helvetica, Times y Courier). Fuentes de marca distintas se avisan y pueden cambiar anchos de línea. Para fidelidad total, agregar la fuente a `public/fonts/` y a `FAMILIES` en `fonts.js`.
-- **Una línea = un elemento**: el texto no se reacomoda entre líneas (eso es lo que protege el diseño).
+- **Una línea = un elemento**: el texto no se reacomoda entre líneas (eso es lo que protege el diseño). Si subes el tamaño, la línea crece pero las de abajo no se recorren: pueden encimarse. El aviso naranja marca las líneas que se pasan de su ancho original.
+- **Cambiar de tipografía cambia el ancho**: la misma frase ocupa distinto en cada fuente.
+- **Fuentes propias**: revisa que su licencia permita embeberlas en PDF (las de Google Fonts sí). Sin archivo bold, la negrita se ve igual que la regular.
+- Sin cursivas ni subrayado por ahora: no se exportarían fielmente.
 - **El autoguardado no viaja**: vive en el navegador. Para otra compu o para respaldo, usa "Guardar proyecto". Borrar datos del navegador borra los borradores.
 - El historial de deshacer se reinicia al cerrar o reabrir un documento (los cambios sí se conservan).
 - Texto justificado se exporta palabra por palabra: se ve idéntico, al copiarlo pueden salir espacios extra.
@@ -77,3 +90,4 @@ El motor WASM pesa ~4.8 MB comprimido; se descarga una vez y queda en caché.
 - **MuPDF / mupdf.js**: AGPL-3.0. Uso interno de Zona Luz sin problema. Si se ofrece como servicio a terceros, hay que publicar el código fuente o adquirir licencia comercial de Artifex.
 - pdf-lib y @pdf-lib/fontkit: MIT.
 - DejaVu Sans: licencia Bitstream Vera / DejaVu (libre). Liberation: SIL Open Font License 1.1.
+- Montserrat, Inter, Poppins, Roboto, Open Sans, Lato, Oswald, Playfair Display: SIL Open Font License 1.1 (Roboto también Apache 2.0).

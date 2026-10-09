@@ -58,6 +58,11 @@
           <button class="btn" id="zIn" aria-label="Acercar">+</button>
           <button class="btn" id="zFit">Ajustar</button>
         </div>
+        <div class="grp" role="group" aria-label="Agregar">
+          <button class="btn" id="addTextBtn" title="Agregar texto: luego haz clic en la página">＋ Texto</button>
+          <label class="btn" for="addImgIn" title="Agregar imagen a la página que estás viendo (también puedes arrastrarla o pegarla)">＋ Imagen</label>
+          <input type="file" id="addImgIn" accept="image/*" hidden>
+        </div>
         <button class="btn" id="showEd" aria-pressed="false">Ver editables</button>
         <button class="btn" id="newDoc">Abrir otro</button>
         <button class="btn" id="saveProj" title="Descarga un archivo .zlpdf para seguir editando después (Ctrl+Shift+S)">Guardar proyecto</button>
@@ -81,8 +86,32 @@
           <div><dt>Flechas · Shift</dt><dd>Mover imagen 1 pt · 10 pt</dd></div>
           <div><dt>Doble clic</dt><dd>Alternar mover / encuadrar foto</dd></div>
           <div><dt>Ctrl + rueda</dt><dd>Zoom dentro de la imagen</dd></div>
-          <div><dt>Esc</dt><dd>Soltar selección</dd></div>
+          <div><dt>Ctrl B</dt><dd>Negrita en la selección</dd></div>
+          <div><dt>Supr</dt><dd>Eliminar imagen seleccionada</dd></div>
+          <div><dt>Ctrl V</dt><dd>Pegar imagen en la página</dd></div>
+          <div><dt>Esc</dt><dd>Soltar selección o cancelar</dd></div>
         </dl>
+      </div>
+      <div class="row ctx" id="tctx" hidden>
+        <span class="lbl" id="tctxLbl">Línea</span>
+        <label class="vh" for="fontSel">Tipografía</label>
+        <select id="fontSel" class="sel"></select>
+        <input type="file" id="fontIn" accept=".ttf,.otf" multiple hidden>
+        <div class="grp" role="group" aria-label="Tamaño">
+          <button class="btn sq" id="sDown" aria-label="Reducir tamaño">−</button>
+          <label class="vh" for="sizeIn">Tamaño en puntos</label>
+          <input type="number" id="sizeIn" class="num" min="4" max="200" step="0.5">
+          <span class="unit">pt</span>
+          <button class="btn sq" id="sUp" aria-label="Aumentar tamaño">+</button>
+        </div>
+        <button class="btn sq bold" id="boldBtn" aria-pressed="false" title="Negrita (Ctrl+B)">B</button>
+        <div class="grp colors" role="group" aria-label="Color">
+          <label class="vh" for="colorIn">Color del texto</label>
+          <input type="color" id="colorIn" title="Elegir color">
+          <div class="swatches" id="swatches"></div>
+        </div>
+        <button class="btn" id="delText" hidden>Eliminar texto</button>
+        <span class="hint" id="tHint">Selecciona palabras para cambiar solo esas; sin selección cambia la línea completa.</span>
       </div>
       <div class="row ctx" id="ctx" hidden>
         <span class="lbl">Imagen</span>
@@ -97,6 +126,7 @@
           <span class="zoomval" id="zoomImgVal">100%</span></label>
         <span class="chip" id="dims"></span>
         <button class="btn" id="resetImg">Restablecer</button>
+        <button class="btn" id="delImg" title="Eliminar imagen (Supr)">Eliminar</button>
         <span class="hint">Esquinas redimensionan · Shift mantiene proporción · Doble clic alterna encuadre · Flechas mueven 1 pt</span>
       </div>
     </header>

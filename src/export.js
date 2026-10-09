@@ -2,7 +2,7 @@
 // background as one image per page, image frames re-cropped to their current framing.
 import { PDFDocument, rgb, degrees } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { fontBytes } from "./fonts.js";
+import { fontBytes, canSubset } from "./fonts.js";
 
 const hexRgb = (c) => { const n = parseInt(c.slice(1), 16); return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255); };
 
@@ -29,9 +29,14 @@ export async function exportPdf(editor, onProgress) {
   pdf.registerFontkit(fontkit);
   pdf.setTitle(model.title); pdf.setCreator("Zona Luz · Editor PDF"); pdf.setProducer("zl-pdf-editor");
 
-  const fonts = {}; // fam -> [regular, bold]
+  const fonts = {}; // fam -> [regular, bold] embedded fonts
   const fontFor = async (st) => {
-    if (!fonts[st.f]) { const [r, b] = await fontBytes(st.f); fonts[st.f] = [await pdf.embedFont(r, { subset: true }), await pdf.embedFont(b, { subset: true })]; }
+    if (!fonts[st.f]) {
+      const [r, b] = await fontBytes(st.f);
+      const emb = async (u8) => pdf.embedFont(u8, { subset: canSubset(u8) });
+      const er = await emb(r);
+      fonts[st.f] = [er, b === r ? er : await emb(b)];
+    }
     return fonts[st.f][st.b ? 1 : 0];
   };
   const cache = {};
@@ -40,8 +45,8 @@ export async function exportPdf(editor, onProgress) {
     const p = model.pages[pi], pg = pdf.addPage([p.w, p.h]);
     pg.drawImage(await pdf.embedPng(p.bg), { x: 0, y: 0, width: p.w, height: p.h });
 
-    for (const f of frames.filter((f) => f.page === pi)) {
-      const clean = !editor.isDirtyFrame(f);
+    for (const f of frames.filter((f) => f.page === pi && !f.hid)) {
+      const clean = !f.added && !editor.isDirtyFrame(f);
       let emb = clean ? cache[f.a] : null;
       if (!emb) {
         if (clean) { const a = assets[f.a]; emb = a.mime === "image/png" ? await pdf.embedPng(a.bytes) : await pdf.embedJpg(a.bytes); cache[f.a] = emb; }
@@ -50,7 +55,8 @@ export async function exportPdf(editor, onProgress) {
       pg.drawImage(emb, { x: f.x, y: p.h - f.y - f.h, width: f.w, height: f.h });
     }
 
-    for (const { data: l, el } of lines.filter((x) => x.page === pi)) {
+    for (const { data: l, el, hid } of lines.filter((x) => x.page === pi)) {
+      if (hid) continue;
       const runs = editor.runsOf(el); if (!runs.length) continue;
       let nat = 0, spaces = 0;
       for (const r of runs) { nat += (await fontFor(r.st)).widthOfTextAtSize(r.t, r.st.s); spaces += (r.t.match(/ /g) || []).length; }
@@ -63,7 +69,7 @@ export async function exportPdf(editor, onProgress) {
         for (const t of parts) {
           if (!t) continue;
           const w = font.widthOfTextAtSize(t, r.st.s);
-          if (t !== " ") {
+          if (t.trim()) {
             if (l.rot) pg.drawText(t, { x: l.x, y: p.h - l.y + adv * (l.rot < 0 ? 1 : -1), size: r.st.s, font, color, rotate: degrees(-l.rot) });
             else pg.drawText(t, { x: l.x + adv, y: p.h - l.y, size: r.st.s, font, color });
           }

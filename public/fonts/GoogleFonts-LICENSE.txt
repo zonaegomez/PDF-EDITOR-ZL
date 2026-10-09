@@ -1,0 +1,4 @@
+Montserrat, Inter, Poppins, Roboto, Open Sans, Lato, Playfair Display y Oswald
+se distribuyen desde Google Fonts bajo SIL Open Font License 1.1 (Roboto: Apache License 2.0 / OFL).
+Permiten uso comercial y embeber las fuentes en documentos PDF.
+https://openfontlicense.org  ·  https://fonts.google.com

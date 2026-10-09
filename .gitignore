@@ -7,3 +7,4 @@ test/*.pdf
 .DS_Store
 .vercel
 *.zlpdf
+test/sample.png

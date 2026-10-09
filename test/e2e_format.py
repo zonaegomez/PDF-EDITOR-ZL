@@ -1,0 +1,105 @@
+# Formatting (font/size/color/bold on a selection), added text boxes, added/deleted images, custom fonts,
+# with undo, autosave/resume, .zlpdf round trip and export checks.
+import asyncio, sys, json
+from playwright.async_api import async_playwright
+PDF, OUT = sys.argv[1], sys.argv[2]; URL = sys.argv[3] if len(sys.argv) > 3 else "http://localhost:4173/"
+TITLE = "[...document.querySelectorAll('.line')].find(e=>e.textContent.startsWith('PUENTE SAN JUAN'))"
+RUNS = f"JSON.stringify(window.__ed.runsOf({TITLE}).map(r=>[r.t,r.st.s,r.st.c,r.st.f,r.st.b]))"
+res = []
+def ok(c, m): res.append(c); print(("PASS " if c else "FAIL ") + m, flush=True)
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch(); ctx = await b.new_context(viewport={"width": 1400, "height": 1000}, accept_downloads=True)
+        pg = await ctx.new_page(); errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        await ctx.route("**/fonts.googleapis.com/**", lambda r: r.abort())
+        await pg.goto(URL, wait_until="domcontentloaded")
+        await pg.set_input_files("#pdfIn", PDF); await pg.wait_for_selector("#app:not([hidden])", timeout=120000); await pg.wait_for_timeout(500)
+        # expose editor for assertions (test only): reach it through a line element's closure-free API
+        await pg.evaluate("""()=>{ const l=document.querySelector('.line'); window.__ed={ runsOf:(el)=>[...el.querySelectorAll('span[data-s]')].map(s=>({t:s.textContent,st:{s:+s.dataset.s,c:s.dataset.c,f:s.dataset.f,b:+s.dataset.b}})) }; }""")
+        el = await pg.evaluate_handle(TITLE); await el.scroll_into_view_if_needed(); await el.click()
+        top0 = await pg.evaluate(f"{TITLE}.offsetTop")
+        # select "SAN" (chars 7..10)
+        await pg.evaluate(f"""()=>{{const el={TITLE}; const t=el.querySelector('span').firstChild; const r=document.createRange(); r.setStart(t,7); r.setEnd(t,10); const s=getSelection(); s.removeAllRanges(); s.addRange(r);}}""")
+        await pg.wait_for_timeout(150)
+        lbl = await pg.inner_text("#tctxLbl"); ok(await pg.is_visible("#tctx") and lbl.lower() == "selección", "text toolbar shows for a selection: " + lbl + " size field=" + await pg.input_value("#sizeIn"))
+        await pg.fill("#sizeIn", "48"); await pg.press("#sizeIn", "Enter"); await pg.wait_for_timeout(150)
+        runs = json.loads(await pg.evaluate(RUNS))
+        ok(len(runs) == 3 and runs[1][0] == "SAN" and runs[1][1] == 48 and runs[0][1] == 36, f"size applies only to selection {runs}")
+        top1 = await pg.evaluate(f"{TITLE}.offsetTop")
+        ok(top1 < top0, f"line box moves up so the baseline stays put ({top0}->{top1})")
+        await pg.eval_on_selector("#colorIn", "(e)=>{e.value='#e11d48'; e.dispatchEvent(new Event('input',{bubbles:true}))}"); await pg.wait_for_timeout(100)
+        await pg.select_option("#fontSel", "montserrat"); await pg.wait_for_timeout(400)
+        await pg.click("#boldBtn"); await pg.wait_for_timeout(900)
+        runs = json.loads(await pg.evaluate(RUNS))
+        ok(runs[1] == ["SAN", 48, "#e11d48", "montserrat", 1] and runs[0][2] == "#1f2220", f"color, font and bold on selection only {runs[1]}")
+        ok("montserrat" in (await pg.evaluate(f"getComputedStyle({TITLE}.querySelectorAll('span')[1]).fontFamily")), "Montserrat rendered")
+        for _ in range(4): await pg.keyboard.press("Control+z")
+        await pg.wait_for_timeout(200)
+        runs = json.loads(await pg.evaluate(RUNS))
+        ok(len(runs) == 1 and runs[0][1] == 36, f"4x Ctrl+Z back to original {runs}")
+        for _ in range(4): await pg.keyboard.press("Control+y")
+        await pg.wait_for_timeout(200)
+        runs = json.loads(await pg.evaluate(RUNS))
+        ok(runs[1] == ["SAN", 48, "#e11d48", "montserrat", 1], "redo restores formatting")
+        # --- add text box on page 6 below the title
+        page6 = (await pg.query_selector_all(".page"))[5]; box = await page6.bounding_box()
+        await pg.click("#addTextBtn"); await pg.mouse.click(box["x"] + box["width"] * 0.1, box["y"] + box["height"] * 0.2); await pg.wait_for_timeout(200)
+        n_added = await pg.evaluate("document.querySelectorAll('.line.added').length")
+        ok(n_added == 1, "click on page creates a text box")
+        await pg.keyboard.type("Hola Zona Luz", delay=20); await pg.keyboard.press("Enter"); await pg.keyboard.type("segunda línea", delay=20); await pg.wait_for_timeout(900)
+        txt = await pg.evaluate("[...document.querySelectorAll('.line.added')].map(e=>e.textContent)")
+        ok(txt == ["Hola Zona Luz", "segunda línea"], f"typing + Enter makes next line {txt}")
+        # drag the first box by its handle
+        h = await pg.query_selector(".line.added + .lhandle"); hb = await h.bounding_box()
+        x_before = await pg.evaluate("document.querySelector('.line.added').offsetLeft")
+        await pg.mouse.move(hb["x"] + 5, hb["y"] + 5); await pg.mouse.down(); await pg.mouse.move(hb["x"] + 85, hb["y"] + 45, steps=6); await pg.mouse.up()
+        x_after = await pg.evaluate("document.querySelector('.line.added').offsetLeft")
+        ok(x_after > x_before + 30, f"handle drag moves the box ({x_before}->{x_after})")
+        # --- custom font upload on the added box
+        await pg.evaluate("()=>{const el=document.querySelector('.line.added'); el.focus(); const r=document.createRange(); r.selectNodeContents(el); r.collapse(false); getSelection().removeAllRanges(); getSelection().addRange(r);}")
+        await pg.set_input_files("#fontIn", ["/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"]); await pg.wait_for_timeout(800)
+        fam = await pg.evaluate("document.querySelector('.line.added span').dataset.f"); print("  toast:", await pg.inner_text("#toast"), "| tctx hidden:", await pg.is_hidden("#tctx"))
+        ok(fam.startswith("c_") and "DejaVuSerif" in await pg.inner_text("#fontSel"), f"uploaded font applied to the whole box ({fam})")
+        # --- add an image, delete an original one
+        await pg.keyboard.press("Escape")
+        await page6.scroll_into_view_if_needed()
+        await pg.set_input_files("#addImgIn", f"{OUT}/sample.png"); await pg.wait_for_timeout(500)
+        ok(await pg.evaluate("document.querySelectorAll('.frame.added').length") == 1 and await pg.is_visible("#ctx"), "image added and selected")
+        orig = await pg.evaluate_handle("document.querySelectorAll('.pwrap')[5].querySelector('.frame:not(.added)')")
+        await orig.scroll_into_view_if_needed(); await orig.click(); await pg.keyboard.press("Delete"); await pg.wait_for_timeout(200)
+        ok(await pg.evaluate("document.querySelectorAll('.pwrap')[5].querySelector('.frame:not(.added)').hidden"), "Supr deletes the original photo")
+        await pg.keyboard.press("Control+z"); await pg.wait_for_timeout(200)
+        ok(not await pg.evaluate("document.querySelectorAll('.pwrap')[5].querySelector('.frame:not(.added)').hidden"), "Ctrl+Z brings it back")
+        await pg.keyboard.press("Control+y"); await pg.wait_for_timeout(1800)
+        await pg.screenshot(path=f"{OUT}/format_editor.png")
+        await (await pg.query_selector_all(".pwrap"))[5].screenshot(path=f"{OUT}/format_page6.png")
+        ok("guardado" in await pg.inner_text("#saveChip"), "autosaved: " + await pg.inner_text("#saveChip"))
+        def snapshot_js():
+            return "JSON.stringify({added:[...document.querySelectorAll('.line.added:not([hidden])')].map(e=>[e.textContent,e.querySelector('span')?.dataset.f]), imgs:document.querySelectorAll('.frame.added:not([hidden])').length, del:document.querySelectorAll('.pwrap')[5].querySelector('.frame:not(.added)').hidden, title:" + RUNS + "})"
+        snap = await pg.evaluate(snapshot_js())
+        # --- reload & continue
+        await pg.reload(wait_until="domcontentloaded"); await pg.wait_for_selector("#recent:not([hidden])")
+        await pg.evaluate("""()=>{ window.__ed={ runsOf:(el)=>[...el.querySelectorAll('span[data-s]')].map(s=>({t:s.textContent,st:{s:+s.dataset.s,c:s.dataset.c,f:s.dataset.f,b:+s.dataset.b}})) }; }""")
+        await pg.click("#recentList .btn.primary"); await pg.wait_for_selector("#app:not([hidden])", timeout=120000); await pg.wait_for_timeout(600)
+        snap2 = await pg.evaluate(snapshot_js())
+        ok(snap == snap2, "resume restores formatting, text boxes, custom font, added + deleted images")
+        if snap != snap2: print(" before:", snap, "\n after: ", snap2)
+        # --- project round trip (fonts travel inside)
+        async with pg.expect_download() as dl: await pg.keyboard.press("Control+Shift+s")
+        d = await dl.value; path = f"{OUT}/format.zlpdf"; await d.save_as(path)
+        ctx2 = await b.new_context(viewport={"width": 1400, "height": 1000}, accept_downloads=True); await ctx2.route("**/fonts.googleapis.com/**", lambda r: r.abort())
+        pg2 = await ctx2.new_page(); pg2.on("pageerror", lambda e: errs.append(str(e)))
+        await pg2.goto(URL, wait_until="domcontentloaded")
+        await pg2.evaluate("""()=>{ window.__ed={ runsOf:(el)=>[...el.querySelectorAll('span[data-s]')].map(s=>({t:s.textContent,st:{s:+s.dataset.s,c:s.dataset.c,f:s.dataset.f,b:+s.dataset.b}})) }; }""")
+        await pg2.set_input_files("#pdfIn", path); await pg2.wait_for_selector("#app:not([hidden])", timeout=120000); await pg2.wait_for_timeout(600)
+        snap3 = await pg2.evaluate(snapshot_js())
+        ok(snap == snap3, "fresh browser opens .zlpdf with everything, including the uploaded font")
+        ok("DejaVuSerif" in await pg2.inner_text("#fontSel"), "uploaded font listed in the fresh browser")
+        # --- export
+        async with pg2.expect_download(timeout=120000) as dl: await pg2.keyboard.press("Control+e")
+        d = await dl.value; await d.save_as(f"{OUT}/format_export.pdf"); ok(True, "exported " + d.suggested_filename)
+        print("errors:", errs[:5]); ok(not errs, "no page errors")
+        print(f"{sum(res)}/{len(res)} passed")
+        await b.close()
+asyncio.run(main())
